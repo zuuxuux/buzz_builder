@@ -459,9 +459,9 @@
             const targetCamX = playerScreen.x - CANVAS_WIDTH / 2;
             const targetCamY = playerScreen.y - CANVAS_HEIGHT / 2;
 
-            // Smooth camera follow
-            gameState.cameraX += (targetCamX - gameState.cameraX) * 0.1;
-            gameState.cameraY += (targetCamY - gameState.cameraY) * 0.1;
+            // Snap camera to player (no lag)
+            gameState.cameraX = targetCamX;
+            gameState.cameraY = targetCamY;
         }
 
         // Initialize

@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Isometric Build-Em-Up</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #1a1a2e;
+            font-family: system-ui, sans-serif;
+        }
+        #game-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+        #instructions {
+            color: #eee;
+            text-align: center;
+            font-size: 14px;
+        }
+        #instructions kbd {
+            background: #333;
+            padding: 2px 8px;
+            border-radius: 4px;
+            border: 1px solid #555;
+        }
+        canvas {
+            border-radius: 8px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <div id="instructions">
+            <kbd>Arrow Keys</kbd> Move &nbsp;&nbsp;
+            <kbd>Space</kbd> Build Cube
+        </div>
+    </div>
+    <script src="https://unpkg.com/kaplay@3001/dist/kaplay.js"></script>
+    <script>
+        // Initialize Kaplay
+        const k = kaplay({
+            width: 800,
+            height: 600,
+            background: [40, 44, 52],
+            global: false,
+        });
+
+        // Isometric settings
+        const TILE_WIDTH = 64;
+        const TILE_HEIGHT = 32;
+        const CUBE_HEIGHT = 24;
+        const GRID_SIZE = 10;
+        const OFFSET_X = 400;
+        const OFFSET_Y = 150;
+
+        // Game state
+        const cubeHeights = [];
+        for (let i = 0; i < GRID_SIZE; i++) {
+            cubeHeights[i] = [];
+            for (let j = 0; j < GRID_SIZE; j++) {
+                cubeHeights[i][j] = 0;
+            }
+        }
+
+        // Player state
+        const player = {
+            x: 5,
+            y: 5,
+            facing: { x: 0, y: -1 }, // Facing "up" in grid space
+        };
+
+        // Direction mappings for arrow keys (isometric)
+        const directions = {
+            up:    { x: 0, y: -1 },
+            down:  { x: 0, y: 1 },
+            left:  { x: -1, y: 0 },
+            right: { x: 1, y: 0 },
+        };
+
+        // Convert grid coords to screen coords
+        function gridToScreen(gx, gy, gz = 0) {
+            const sx = (gx - gy) * (TILE_WIDTH / 2) + OFFSET_X;
+            const sy = (gx + gy) * (TILE_HEIGHT / 2) - gz * CUBE_HEIGHT + OFFSET_Y;
+            return { x: sx, y: sy };
+        }
+
+        // Check if position is valid
+        function isValidPosition(x, y) {
+            return x >= 0 && x < GRID_SIZE && y >= 0 && y < GRID_SIZE;
+        }
+
+        // Get height at position
+        function getHeight(x, y) {
+            if (!isValidPosition(x, y)) return 999;
+            return cubeHeights[x][y];
+        }
+
+        // Get player's current height
+        function getPlayerHeight() {
+            return getHeight(player.x, player.y);
+        }
+
+        // Draw isometric diamond (ground tile)
+        function drawTile(gx, gy, color, outlineColor) {
+            const pos = gridToScreen(gx, gy, 0);
+            const hw = TILE_WIDTH / 2;
+            const hh = TILE_HEIGHT / 2;
+
+            k.drawPolygon({
+                pts: [
+                    k.vec2(0, -hh),
+                    k.vec2(hw, 0),
+                    k.vec2(0, hh),
+                    k.vec2(-hw, 0),
+                ],
+                pos: k.vec2(pos.x, pos.y),
+                fill: true,
+                color: k.Color.fromArray(color),
+                outline: { width: 1, color: k.Color.fromArray(outlineColor) },
+            });
+        }
+
+        // Draw isometric cube
+        function drawCube(gx, gy, gz, colors) {
+            const pos = gridToScreen(gx, gy, gz + 1);
+            const hw = TILE_WIDTH / 2;
+            const hh = TILE_HEIGHT / 2;
+            const ch = CUBE_HEIGHT;
+
+            // Left face
+            k.drawPolygon({
+                pts: [
+                    k.vec2(-hw, 0),
+                    k.vec2(0, hh),
+                    k.vec2(0, hh + ch),
+                    k.vec2(-hw, ch),
+                ],
+                pos: k.vec2(pos.x, pos.y),
+                fill: true,
+                color: k.Color.fromArray(colors.left),
+            });
+
+            // Right face
+            k.drawPolygon({
+                pts: [
+                    k.vec2(hw, 0),
+                    k.vec2(0, hh),
+                    k.vec2(0, hh + ch),
+                    k.vec2(hw, ch),
+                ],
+                pos: k.vec2(pos.x, pos.y),
+                fill: true,
+                color: k.Color.fromArray(colors.right),
+            });
+
+            // Top face
+            k.drawPolygon({
+                pts: [
+                    k.vec2(0, -hh),
+                    k.vec2(hw, 0),
+                    k.vec2(0, hh),
+                    k.vec2(-hw, 0),
+                ],
+                pos: k.vec2(pos.x, pos.y),
+                fill: true,
+                color: k.Color.fromArray(colors.top),
+            });
+        }
+
+        // Draw the player (circle with direction indicator)
+        function drawPlayer() {
+            const height = getPlayerHeight();
+            const pos = gridToScreen(player.x, player.y, height);
+
+            // Player shadow
+            k.drawEllipse({
+                pos: k.vec2(pos.x, pos.y + 4),
+                radiusX: 14,
+                radiusY: 8,
+                color: k.Color.fromArray([0, 0, 0, 0.3]),
+            });
+
+            // Player body (circle rendered as ellipse for isometric)
+            k.drawEllipse({
+                pos: k.vec2(pos.x, pos.y - 10),
+                radiusX: 16,
+                radiusY: 16,
+                color: k.Color.fromArray([255, 100, 100]),
+                outline: { width: 2, color: k.Color.fromArray([200, 50, 50]) },
+            });
+
+            // Direction indicator
+            const facingPos = gridToScreen(
+                player.x + player.facing.x * 0.5,
+                player.y + player.facing.y * 0.5,
+                height
+            );
+
+            k.drawCircle({
+                pos: k.vec2(facingPos.x, facingPos.y - 10),
+                radius: 6,
+                color: k.Color.fromArray([255, 255, 100]),
+                outline: { width: 1, color: k.Color.fromArray([200, 200, 50]) },
+            });
+        }
+
+        // Draw highlight on tile player is facing
+        function drawFacingHighlight() {
+            const targetX = player.x + player.facing.x;
+            const targetY = player.y + player.facing.y;
+
+            if (!isValidPosition(targetX, targetY)) return;
+
+            const height = getHeight(targetX, targetY);
+            const pos = gridToScreen(targetX, targetY, height);
+            const hw = TILE_WIDTH / 2;
+            const hh = TILE_HEIGHT / 2;
+
+            k.drawPolygon({
+                pts: [
+                    k.vec2(0, -hh),
+                    k.vec2(hw, 0),
+                    k.vec2(0, hh),
+                    k.vec2(-hw, 0),
+                ],
+                pos: k.vec2(pos.x, pos.y),
+                fill: true,
+                color: k.Color.fromArray([255, 255, 100, 0.4]),
+                outline: { width: 2, color: k.Color.fromArray([255, 255, 100]) },
+            });
+        }
+
+        // Cube colors based on height
+        function getCubeColors(height) {
+            const hue = (height * 40) % 360;
+            // Simple hue-based coloring
+            const baseColors = [
+                { top: [120, 180, 120], left: [80, 140, 80], right: [100, 160, 100] },
+                { top: [180, 140, 100], left: [140, 100, 60], right: [160, 120, 80] },
+                { top: [100, 140, 180], left: [60, 100, 140], right: [80, 120, 160] },
+                { top: [180, 120, 160], left: [140, 80, 120], right: [160, 100, 140] },
+                { top: [160, 160, 100], left: [120, 120, 60], right: [140, 140, 80] },
+            ];
+            return baseColors[height % baseColors.length];
+        }
+
+        // Main game scene
+        k.scene("game", () => {
+            // Handle movement
+            function tryMove(dir) {
+                const newX = player.x + dir.x;
+                const newY = player.y + dir.y;
+
+                // Update facing direction
+                player.facing = { x: dir.x, y: dir.y };
+
+                if (!isValidPosition(newX, newY)) return;
+
+                const currentHeight = getPlayerHeight();
+                const targetHeight = getHeight(newX, newY);
+
+                // Can only move if height difference is <= 1
+                if (targetHeight <= currentHeight + 1) {
+                    player.x = newX;
+                    player.y = newY;
+                }
+            }
+
+            // Place cube
+            function placeCube() {
+                const targetX = player.x + player.facing.x;
+                const targetY = player.y + player.facing.y;
+
+                if (!isValidPosition(targetX, targetY)) return;
+
+                cubeHeights[targetX][targetY]++;
+            }
+
+            // Key handlers
+            k.onKeyPress("up", () => tryMove(directions.up));
+            k.onKeyPress("down", () => tryMove(directions.down));
+            k.onKeyPress("left", () => tryMove(directions.left));
+            k.onKeyPress("right", () => tryMove(directions.right));
+            k.onKeyPress("space", () => placeCube());
+
+            // Render loop
+            k.onDraw(() => {
+                // Collect all drawable items with their sort keys
+                const drawables = [];
+
+                // Add ground tiles
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    for (let y = 0; y < GRID_SIZE; y++) {
+                        drawables.push({
+                            type: "tile",
+                            x, y, z: 0,
+                            sortKey: x + y,
+                        });
+                    }
+                }
+
+                // Add cubes
+                for (let x = 0; x < GRID_SIZE; x++) {
+                    for (let y = 0; y < GRID_SIZE; y++) {
+                        const height = cubeHeights[x][y];
+                        for (let z = 0; z < height; z++) {
+                            drawables.push({
+                                type: "cube",
+                                x, y, z,
+                                sortKey: x + y + z * 0.1,
+                            });
+                        }
+                    }
+                }
+
+                // Add player
+                const playerHeight = getPlayerHeight();
+                drawables.push({
+                    type: "player",
+                    x: player.x,
+                    y: player.y,
+                    z: playerHeight,
+                    sortKey: player.x + player.y + playerHeight * 0.1 + 0.05,
+                });
+
+                // Sort by depth
+                drawables.sort((a, b) => a.sortKey - b.sortKey);
+
+                // Draw facing highlight first (below everything at that position)
+                drawFacingHighlight();
+
+                // Draw everything
+                for (const item of drawables) {
+                    if (item.type === "tile") {
+                        const isEven = (item.x + item.y) % 2 === 0;
+                        drawTile(
+                            item.x, item.y,
+                            isEven ? [70, 90, 70] : [60, 80, 60],
+                            [50, 70, 50]
+                        );
+                    } else if (item.type === "cube") {
+                        drawCube(item.x, item.y, item.z, getCubeColors(item.z));
+                    } else if (item.type === "player") {
+                        drawPlayer();
+                    }
+                }
+
+                // Draw UI
+                k.drawText({
+                    text: `Cubes placed: ${cubeHeights.flat().reduce((a, b) => a + b, 0)}`,
+                    pos: k.vec2(20, 20),
+                    size: 18,
+                    color: k.Color.fromArray([200, 200, 200]),
+                });
+
+                k.drawText({
+                    text: `Height: ${playerHeight}`,
+                    pos: k.vec2(20, 45),
+                    size: 18,
+                    color: k.Color.fromArray([200, 200, 200]),
+                });
+            });
+        });
+
+        // Start game
+        k.go("game");
+    </script>
+</body>
+</html>

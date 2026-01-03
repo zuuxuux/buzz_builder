@@ -44,8 +44,10 @@
 <body>
     <div id="game-container">
         <div id="instructions">
-            <kbd>Arrow Keys</kbd> Move &nbsp;&nbsp;
-            <kbd>Space</kbd> Build Cube
+            <kbd>Q W E</kbd><br>
+            <kbd>A</kbd>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<kbd>D</kbd> Tap: Face / Hold: Move &nbsp;&nbsp;
+            <kbd>Space</kbd> Build<br>
+            <kbd>Z X C</kbd>
         </div>
     </div>
     <script src="https://unpkg.com/kaplay@3001/dist/kaplay.js"></script>
@@ -79,16 +81,35 @@
         const player = {
             x: 5,
             y: 5,
-            facing: { x: 0, y: -1 }, // Facing "up" in grid space
+            facing: { x: -1, y: -1 }, // Facing "into screen"
         };
 
-        // Direction mappings for arrow keys (isometric)
+        // 8-way direction mappings using QWEASDZXC layout
+        // Screen directions map to world coords:
+        //   Q W E       (-1,0) (-1,-1) (0,-1)
+        //   A   D   →   (-1,+1)        (+1,-1)
+        //   Z X C       (0,+1) (+1,+1) (+1,0)
         const directions = {
-            up:    { x: 0, y: -1 },
-            down:  { x: 0, y: 1 },
-            left:  { x: -1, y: 0 },
-            right: { x: 1, y: 0 },
+            // QWEASDZXC - 8 directions
+            q: { x: -1, y:  0 },  // screen up-left = world -X
+            w: { x: -1, y: -1 },  // screen up = into screen
+            e: { x:  0, y: -1 },  // screen up-right = world -Y
+            a: { x: -1, y:  1 },  // screen left
+            d: { x:  1, y: -1 },  // screen right
+            z: { x:  0, y:  1 },  // screen down-left = world +Y
+            x: { x:  1, y:  1 },  // screen down = toward camera
+            c: { x:  1, y:  0 },  // screen down-right = world +X
+            // Arrow keys (same as WADX)
+            up:    { x: -1, y: -1 },
+            down:  { x:  1, y:  1 },
+            left:  { x: -1, y:  1 },
+            right: { x:  1, y: -1 },
         };
+
+        // Movement timing
+        const HOLD_THRESHOLD = 300;  // ms before movement starts (longer for kids)
+        const MOVE_INTERVAL = 120;   // ms between moves while holding
+        const keyState = {};
 
         // Convert grid coords to screen coords
         function gridToScreen(gx, gy, gz = 0) {
@@ -259,13 +280,10 @@
 
         // Main game scene
         k.scene("game", () => {
-            // Handle movement
+            // Handle movement (facing is set separately on key press)
             function tryMove(dir) {
                 const newX = player.x + dir.x;
                 const newY = player.y + dir.y;
-
-                // Update facing direction
-                player.facing = { x: dir.x, y: dir.y };
 
                 if (!isValidPosition(newX, newY)) return;
 
@@ -289,11 +307,57 @@
                 cubeHeights[targetX][targetY]++;
             }
 
-            // Key handlers
-            k.onKeyPress("up", () => tryMove(directions.up));
-            k.onKeyPress("down", () => tryMove(directions.down));
-            k.onKeyPress("left", () => tryMove(directions.left));
-            k.onKeyPress("right", () => tryMove(directions.right));
+            // Tap-to-face, hold-to-move handler
+            // If already facing this direction, tap moves one step
+            function setupDirectionKey(key, dir) {
+                k.onKeyPress(key, () => {
+                    const alreadyFacing = player.facing.x === dir.x && player.facing.y === dir.y;
+
+                    if (alreadyFacing) {
+                        // Already facing this way - move one step
+                        tryMove(dir);
+                    } else {
+                        // Face this direction
+                        player.facing = { x: dir.x, y: dir.y };
+                    }
+
+                    keyState[key] = {
+                        pressTime: Date.now(),
+                        lastMove: alreadyFacing ? Date.now() : 0,
+                    };
+                });
+
+                k.onKeyRelease(key, () => {
+                    delete keyState[key];
+                });
+            }
+
+            // Setup all direction keys
+            const dirKeys = ["q", "w", "e", "a", "d", "z", "x", "c", "up", "down", "left", "right"];
+            for (const key of dirKeys) {
+                setupDirectionKey(key, directions[key]);
+            }
+
+            // Check for held keys and move
+            k.onUpdate(() => {
+                const now = Date.now();
+                for (const key of dirKeys) {
+                    if (keyState[key]) {
+                        const state = keyState[key];
+                        const holdTime = now - state.pressTime;
+
+                        // Only move if held past threshold
+                        if (holdTime >= HOLD_THRESHOLD) {
+                            // Check if enough time passed since last move
+                            if (now - state.lastMove >= MOVE_INTERVAL) {
+                                tryMove(directions[key]);
+                                state.lastMove = now;
+                            }
+                        }
+                    }
+                }
+            });
+
             k.onKeyPress("space", () => placeCube());
 
             // Render loop

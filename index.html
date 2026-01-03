@@ -822,9 +822,31 @@
                 const gw = gridDimensions.width;
                 const gh = gridDimensions.height;
 
-                // Add ground tiles
-                for (let x = 0; x < gw; x++) {
-                    for (let y = 0; y < gh; y++) {
+                // Calculate visible tile range (frustum culling)
+                // In isometric: screen_x = (gx - gy) * tw/2, screen_y = (gx + gy) * th/2
+                // We need to find which gx, gy values produce screen coords in view
+                const tw = getTileWidth();
+                const th = getTileHeight();
+                const margin = 100;
+
+                // Approximate visible range based on player position and screen size
+                const visibleRadius = Math.ceil((CANVAS_WIDTH + CANVAS_HEIGHT) / Math.min(tw, th)) + 5;
+                const minX = Math.max(0, player.x - visibleRadius);
+                const maxX = Math.min(gw, player.x + visibleRadius);
+                const minY = Math.max(0, player.y - visibleRadius);
+                const maxY = Math.min(gh, player.y + visibleRadius);
+
+                // Visibility check for edge cases
+                function isVisible(gx, gy, gz = 0) {
+                    const pos = gridToScreen(gx, gy, gz);
+                    return pos.x >= -margin && pos.x <= CANVAS_WIDTH + margin &&
+                           pos.y >= -margin && pos.y <= CANVAS_HEIGHT + margin;
+                }
+
+                // Add ground tiles (only in visible range)
+                for (let x = minX; x < maxX; x++) {
+                    for (let y = minY; y < maxY; y++) {
+                        if (!isVisible(x, y, 0)) continue;
                         drawables.push({
                             type: "tile",
                             x, y, z: 0,
@@ -833,10 +855,12 @@
                     }
                 }
 
-                // Add cubes
-                for (let x = 0; x < gw; x++) {
-                    for (let y = 0; y < gh; y++) {
-                        const height = cubeHeights[x][y];
+                // Add cubes (only in visible range)
+                for (let x = minX; x < maxX; x++) {
+                    for (let y = minY; y < maxY; y++) {
+                        const height = cubeHeights[x]?.[y] ?? 0;
+                        if (height === 0) continue;
+                        if (!isVisible(x, y, 0) && !isVisible(x, y, height)) continue;
                         for (let z = 0; z < height; z++) {
                             drawables.push({
                                 type: "cube",

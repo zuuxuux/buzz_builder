@@ -46,7 +46,9 @@
         <div id="instructions">
             <kbd>Q W E</kbd><br>
             <kbd>A</kbd>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<kbd>D</kbd> Tap: Face / Hold: Move &nbsp;&nbsp;
-            <kbd>Space</kbd> Build<br>
+            <kbd>Space</kbd> Use Skill &nbsp;&nbsp;
+            <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> Select Skill &nbsp;&nbsp;
+            <button id="generate-city" onclick="generateCity(); this.blur(); document.querySelector('canvas').focus();">Generate City</button><br>
             <kbd>Z X C</kbd>
         </div>
     </div>
@@ -123,6 +125,221 @@
             }
         }
         initCubeHeights();
+
+        // City generation constants
+        const CITY_SIZE = 100;
+
+        // Structure generators - each takes position and places cubes
+        const structures = {
+            // Simple house: solid block with peaked roof
+            house: (startX, startY) => {
+                const width = 3 + Math.floor(Math.random() * 3);  // 3-5
+                const depth = 3 + Math.floor(Math.random() * 3);  // 3-5
+                const height = 2 + Math.floor(Math.random() * 3); // 2-4
+
+                for (let x = 0; x < width; x++) {
+                    for (let y = 0; y < depth; y++) {
+                        const gx = startX + x;
+                        const gy = startY + y;
+                        if (gx < CITY_SIZE && gy < CITY_SIZE) {
+                            cubeHeights[gx][gy] = Math.max(cubeHeights[gx][gy], height);
+                        }
+                    }
+                }
+            },
+
+            // Tower: tall narrow structure
+            tower: (startX, startY) => {
+                const size = 2 + Math.floor(Math.random() * 2);   // 2-3
+                const height = 5 + Math.floor(Math.random() * 6); // 5-10
+
+                for (let x = 0; x < size; x++) {
+                    for (let y = 0; y < size; y++) {
+                        const gx = startX + x;
+                        const gy = startY + y;
+                        if (gx < CITY_SIZE && gy < CITY_SIZE) {
+                            cubeHeights[gx][gy] = Math.max(cubeHeights[gx][gy], height);
+                        }
+                    }
+                }
+            },
+
+            // Pyramid: stepped structure
+            pyramid: (startX, startY) => {
+                const baseSize = 4 + Math.floor(Math.random() * 4); // 4-7
+                const maxHeight = Math.floor(baseSize / 2) + 1;
+
+                for (let h = 0; h < maxHeight; h++) {
+                    const offset = h;
+                    const currentSize = baseSize - h * 2;
+                    if (currentSize <= 0) break;
+
+                    for (let x = 0; x < currentSize; x++) {
+                        for (let y = 0; y < currentSize; y++) {
+                            const gx = startX + offset + x;
+                            const gy = startY + offset + y;
+                            if (gx < CITY_SIZE && gy < CITY_SIZE) {
+                                cubeHeights[gx][gy] = Math.max(cubeHeights[gx][gy], h + 1);
+                            }
+                        }
+                    }
+                }
+            },
+
+            // Stairs: walkable ramp structure
+            stairs: (startX, startY) => {
+                const length = 4 + Math.floor(Math.random() * 5); // 4-8
+                const width = 2 + Math.floor(Math.random() * 2);  // 2-3
+                const direction = Math.floor(Math.random() * 4);  // 0-3 for 4 directions
+
+                for (let i = 0; i < length; i++) {
+                    for (let w = 0; w < width; w++) {
+                        let gx, gy;
+                        if (direction === 0) { gx = startX + i; gy = startY + w; }
+                        else if (direction === 1) { gx = startX + w; gy = startY + i; }
+                        else if (direction === 2) { gx = startX + (length - 1 - i); gy = startY + w; }
+                        else { gx = startX + w; gy = startY + (length - 1 - i); }
+
+                        if (gx >= 0 && gx < CITY_SIZE && gy >= 0 && gy < CITY_SIZE) {
+                            cubeHeights[gx][gy] = Math.max(cubeHeights[gx][gy], i + 1);
+                        }
+                    }
+                }
+            },
+
+            // L-shaped building
+            lBuilding: (startX, startY) => {
+                const height = 2 + Math.floor(Math.random() * 3);
+                const armLength = 4 + Math.floor(Math.random() * 3);
+                const armWidth = 2;
+
+                // Horizontal arm
+                for (let x = 0; x < armLength; x++) {
+                    for (let y = 0; y < armWidth; y++) {
+                        const gx = startX + x;
+                        const gy = startY + y;
+                        if (gx < CITY_SIZE && gy < CITY_SIZE) {
+                            cubeHeights[gx][gy] = Math.max(cubeHeights[gx][gy], height);
+                        }
+                    }
+                }
+                // Vertical arm
+                for (let x = 0; x < armWidth; x++) {
+                    for (let y = 0; y < armLength; y++) {
+                        const gx = startX + x;
+                        const gy = startY + y;
+                        if (gx < CITY_SIZE && gy < CITY_SIZE) {
+                            cubeHeights[gx][gy] = Math.max(cubeHeights[gx][gy], height);
+                        }
+                    }
+                }
+            },
+
+            // Platform with ramp access
+            platform: (startX, startY) => {
+                const size = 5 + Math.floor(Math.random() * 3);  // 5-7
+                const height = 2 + Math.floor(Math.random() * 2); // 2-3
+
+                // Main platform
+                for (let x = 0; x < size; x++) {
+                    for (let y = 0; y < size; y++) {
+                        const gx = startX + x;
+                        const gy = startY + y;
+                        if (gx < CITY_SIZE && gy < CITY_SIZE) {
+                            cubeHeights[gx][gy] = Math.max(cubeHeights[gx][gy], height);
+                        }
+                    }
+                }
+
+                // Ramp on one side
+                for (let i = 0; i < height; i++) {
+                    const gx = startX + size + i;
+                    for (let y = 0; y < 2; y++) {
+                        const gy = startY + Math.floor(size / 2) - 1 + y;
+                        if (gx < CITY_SIZE && gy < CITY_SIZE && gy >= 0) {
+                            cubeHeights[gx][gy] = Math.max(cubeHeights[gx][gy], height - i);
+                        }
+                    }
+                }
+            },
+
+            // Random scatter of single cubes (debris/decoration)
+            scatter: (startX, startY) => {
+                const area = 6 + Math.floor(Math.random() * 4);
+                const count = 3 + Math.floor(Math.random() * 5);
+
+                for (let i = 0; i < count; i++) {
+                    const gx = startX + Math.floor(Math.random() * area);
+                    const gy = startY + Math.floor(Math.random() * area);
+                    const h = 1 + Math.floor(Math.random() * 2);
+                    if (gx < CITY_SIZE && gy < CITY_SIZE) {
+                        cubeHeights[gx][gy] = Math.max(cubeHeights[gx][gy], h);
+                    }
+                }
+            },
+
+            // Wall segment
+            wall: (startX, startY) => {
+                const length = 6 + Math.floor(Math.random() * 8);
+                const height = 2 + Math.floor(Math.random() * 2);
+                const horizontal = Math.random() > 0.5;
+
+                for (let i = 0; i < length; i++) {
+                    const gx = horizontal ? startX + i : startX;
+                    const gy = horizontal ? startY : startY + i;
+                    if (gx < CITY_SIZE && gy < CITY_SIZE) {
+                        cubeHeights[gx][gy] = Math.max(cubeHeights[gx][gy], height);
+                    }
+                }
+            },
+        };
+
+        // Generate a full city
+        function generateCity() {
+            // Reset grid to city size
+            gridDimensions.width = CITY_SIZE;
+            gridDimensions.height = CITY_SIZE;
+            gameState.gridSize = CITY_SIZE;
+
+            // Initialize empty grid
+            cubeHeights = [];
+            for (let i = 0; i < CITY_SIZE; i++) {
+                cubeHeights[i] = [];
+                for (let j = 0; j < CITY_SIZE; j++) {
+                    cubeHeights[i][j] = 0;
+                }
+            }
+
+            // Place random structures
+            const structureTypes = Object.keys(structures);
+            const numStructures = 80 + Math.floor(Math.random() * 40); // 80-120 structures
+
+            for (let i = 0; i < numStructures; i++) {
+                const type = structureTypes[Math.floor(Math.random() * structureTypes.length)];
+                const x = Math.floor(Math.random() * (CITY_SIZE - 10));
+                const y = Math.floor(Math.random() * (CITY_SIZE - 10));
+                structures[type](x, y);
+            }
+
+            // Reset player to center
+            player.x = Math.floor(CITY_SIZE / 2);
+            player.y = Math.floor(CITY_SIZE / 2);
+            player.facing = { x: -1, y: -1 };
+
+            // Clear area around player spawn
+            for (let x = -2; x <= 2; x++) {
+                for (let y = -2; y <= 2; y++) {
+                    const gx = player.x + x;
+                    const gy = player.y + y;
+                    if (gx >= 0 && gx < CITY_SIZE && gy >= 0 && gy < CITY_SIZE) {
+                        cubeHeights[gx][gy] = 0;
+                    }
+                }
+            }
+
+            // Update zoom and camera
+            updateZoomAndCamera();
+        }
 
         // Track grid dimensions separately for asymmetric expansion
         const gridDimensions = {
@@ -223,6 +440,14 @@
             y: 5,
             facing: { x: -1, y: -1 }, // Facing "into screen"
         };
+
+        // Skill system
+        const skills = {
+            1: { name: "Build", action: "build" },
+            2: { name: "Clear", action: "clear" },
+            3: { name: "Fly", action: "fly" },
+        };
+        let currentSkill = 1;
 
         // Update camera to follow player (when scrolling)
         function updateCamera() {
@@ -502,15 +727,29 @@
                 }
             }
 
-            // Place cube
-            function placeCube() {
+            // Use current skill
+            function useSkill() {
                 const targetX = player.x + player.facing.x;
                 const targetY = player.y + player.facing.y;
 
-                // Allow expansion when building to positive coordinates
-                if (!isValidPosition(targetX, targetY, true)) return;
+                // Allow expansion when building
+                if (!isValidPosition(targetX, targetY, currentSkill === 1)) return;
 
-                cubeHeights[targetX][targetY]++;
+                const action = skills[currentSkill].action;
+
+                if (action === "build") {
+                    // Add one cube
+                    cubeHeights[targetX][targetY]++;
+                } else if (action === "clear") {
+                    // Remove one cube (if any)
+                    if (cubeHeights[targetX][targetY] > 0) {
+                        cubeHeights[targetX][targetY]--;
+                    }
+                } else if (action === "fly") {
+                    // Teleport to target position
+                    player.x = targetX;
+                    player.y = targetY;
+                }
             }
 
             // Tap-to-face, hold-to-move handler
@@ -564,7 +803,12 @@
                 }
             });
 
-            k.onKeyPress("space", () => placeCube());
+            k.onKeyPress("space", () => useSkill());
+
+            // Skill selection keys
+            k.onKeyPress("1", () => { currentSkill = 1; });
+            k.onKeyPress("2", () => { currentSkill = 2; });
+            k.onKeyPress("3", () => { currentSkill = 3; });
 
             // Update camera each frame
             k.onUpdate(() => {
@@ -653,6 +897,20 @@
                     pos: k.vec2(20, 42),
                     size: 16,
                     color: k.Color.fromArray([200, 200, 200]),
+                });
+
+                // Draw skill indicator
+                k.drawText({
+                    text: `Skill: (1) Build  (2) Clear  (3) Fly`,
+                    pos: k.vec2(20, 64),
+                    size: 14,
+                    color: k.Color.fromArray([150, 150, 150]),
+                });
+                k.drawText({
+                    text: `Active: ${skills[currentSkill].name}`,
+                    pos: k.vec2(20, 82),
+                    size: 16,
+                    color: k.Color.fromArray([255, 255, 100]),
                 });
 
                 // Draw minimap when scrolling

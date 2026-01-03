@@ -67,21 +67,154 @@
             canvas.focus();
         }
 
-        // Isometric settings
-        const TILE_WIDTH = 64;
-        const TILE_HEIGHT = 32;
-        const CUBE_HEIGHT = 24;
-        const GRID_SIZE = 10;
-        const OFFSET_X = 400;
-        const OFFSET_Y = 150;
+        // Canvas dimensions
+        const CANVAS_WIDTH = 800;
+        const CANVAS_HEIGHT = 600;
 
-        // Game state
-        const cubeHeights = [];
-        for (let i = 0; i < GRID_SIZE; i++) {
-            cubeHeights[i] = [];
-            for (let j = 0; j < GRID_SIZE; j++) {
-                cubeHeights[i][j] = 0;
+        // Base isometric settings (at zoom 1.0)
+        const BASE_TILE_WIDTH = 64;
+        const BASE_TILE_HEIGHT = 32;
+        const BASE_CUBE_HEIGHT = 24;
+
+        // Grid settings
+        const GRID_INCREMENT = 5;
+        const MIN_GRID_SIZE = 10;
+        const MAX_ZOOM_GRID = 30;  // After this size, start scrolling instead of zooming
+        const MIN_ZOOM = 0.4;      // Minimum zoom level
+
+        // Dynamic game state
+        const gameState = {
+            gridSize: MIN_GRID_SIZE,
+            zoom: 1.0,
+            cameraX: 0,  // Camera offset for scrolling
+            cameraY: 0,
+            scrolling: false,  // Whether we're in scroll mode
+        };
+
+        // Calculate zoom and camera based on grid size
+        function updateZoomAndCamera() {
+            if (gameState.gridSize <= MAX_ZOOM_GRID) {
+                // Zoom mode: scale down to fit grid
+                gameState.zoom = Math.max(MIN_ZOOM, MIN_GRID_SIZE / gameState.gridSize);
+                gameState.scrolling = false;
+                gameState.cameraX = 0;
+                gameState.cameraY = 0;
+            } else {
+                // Scroll mode: fixed zoom, camera follows player
+                gameState.zoom = MIN_ZOOM;
+                gameState.scrolling = true;
             }
+        }
+
+        // Get current tile dimensions based on zoom
+        function getTileWidth() { return BASE_TILE_WIDTH * gameState.zoom; }
+        function getTileHeight() { return BASE_TILE_HEIGHT * gameState.zoom; }
+        function getCubeHeight() { return BASE_CUBE_HEIGHT * gameState.zoom; }
+
+        // Game state - cube heights (dynamic 2D array)
+        let cubeHeights = [];
+        function initCubeHeights() {
+            cubeHeights = [];
+            for (let i = 0; i < gameState.gridSize; i++) {
+                cubeHeights[i] = [];
+                for (let j = 0; j < gameState.gridSize; j++) {
+                    cubeHeights[i][j] = 0;
+                }
+            }
+        }
+        initCubeHeights();
+
+        // Track grid dimensions separately for asymmetric expansion
+        const gridDimensions = {
+            width: MIN_GRID_SIZE,   // x dimension
+            height: MIN_GRID_SIZE,  // y dimension
+        };
+
+        // Expand grid in negative direction (shift everything)
+        function expandGridNegative(shiftX, shiftY) {
+            if (shiftX > 0) {
+                // Shift all cubes in x direction
+                const newCubes = [];
+                for (let i = 0; i < gridDimensions.width + shiftX; i++) {
+                    newCubes[i] = [];
+                    for (let j = 0; j < gridDimensions.height; j++) {
+                        if (i < shiftX) {
+                            newCubes[i][j] = 0;  // New empty space
+                        } else {
+                            newCubes[i][j] = cubeHeights[i - shiftX]?.[j] ?? 0;
+                        }
+                    }
+                }
+                cubeHeights = newCubes;
+                gridDimensions.width += shiftX;
+                player.x += shiftX;
+            }
+
+            if (shiftY > 0) {
+                // Shift all cubes in y direction
+                for (let i = 0; i < gridDimensions.width; i++) {
+                    const newRow = [];
+                    for (let j = 0; j < gridDimensions.height + shiftY; j++) {
+                        if (j < shiftY) {
+                            newRow[j] = 0;  // New empty space
+                        } else {
+                            newRow[j] = cubeHeights[i]?.[j - shiftY] ?? 0;
+                        }
+                    }
+                    cubeHeights[i] = newRow;
+                }
+                gridDimensions.height += shiftY;
+                player.y += shiftY;
+            }
+        }
+
+        // Expand grid to include a position (grows in 5-tile strips, any direction)
+        function expandGridToFit(x, y) {
+            let expanded = false;
+
+            // Expand in negative x direction (shift grid right)
+            if (x < 0) {
+                const shiftX = Math.ceil(-x / GRID_INCREMENT) * GRID_INCREMENT;
+                expandGridNegative(shiftX, 0);
+                expanded = true;
+            }
+
+            // Expand in negative y direction (shift grid down)
+            if (y < 0) {
+                const shiftY = Math.ceil(-y / GRID_INCREMENT) * GRID_INCREMENT;
+                expandGridNegative(0, shiftY);
+                expanded = true;
+            }
+
+            // Expand width (x) if needed (positive direction)
+            while (x >= gridDimensions.width) {
+                gridDimensions.width += GRID_INCREMENT;
+                expanded = true;
+            }
+
+            // Expand height (y) if needed (positive direction)
+            while (y >= gridDimensions.height) {
+                gridDimensions.height += GRID_INCREMENT;
+                expanded = true;
+            }
+
+            // Update gameState.gridSize to max dimension (for zoom calculation)
+            gameState.gridSize = Math.max(gridDimensions.width, gridDimensions.height);
+
+            if (expanded) {
+                // Ensure cubeHeights array covers new dimensions
+                for (let i = 0; i < gridDimensions.width; i++) {
+                    if (!cubeHeights[i]) cubeHeights[i] = [];
+                    for (let j = 0; j < gridDimensions.height; j++) {
+                        if (cubeHeights[i][j] === undefined) {
+                            cubeHeights[i][j] = 0;
+                        }
+                    }
+                }
+                updateZoomAndCamera();
+            }
+
+            return expanded;
         }
 
         // Player state
@@ -90,6 +223,24 @@
             y: 5,
             facing: { x: -1, y: -1 }, // Facing "into screen"
         };
+
+        // Update camera to follow player (when scrolling)
+        function updateCamera() {
+            if (!gameState.scrolling) return;
+
+            const playerScreen = gridToScreenWorld(player.x, player.y, getHeight(player.x, player.y));
+
+            // Center camera on player
+            const targetCamX = playerScreen.x - CANVAS_WIDTH / 2;
+            const targetCamY = playerScreen.y - CANVAS_HEIGHT / 2;
+
+            // Smooth camera follow
+            gameState.cameraX += (targetCamX - gameState.cameraX) * 0.1;
+            gameState.cameraY += (targetCamY - gameState.cameraY) * 0.1;
+        }
+
+        // Initialize
+        updateZoomAndCamera();
 
         // 8-way direction mappings using QWEASDZXC layout
         // Screen directions map to world coords:
@@ -118,16 +269,40 @@
         const MOVE_INTERVAL = 120;   // ms between moves while holding
         const keyState = {};
 
-        // Convert grid coords to screen coords
-        function gridToScreen(gx, gy, gz = 0) {
-            const sx = (gx - gy) * (TILE_WIDTH / 2) + OFFSET_X;
-            const sy = (gx + gy) * (TILE_HEIGHT / 2) - gz * CUBE_HEIGHT + OFFSET_Y;
+        // Convert grid coords to world coords (before camera transform)
+        function gridToScreenWorld(gx, gy, gz = 0) {
+            const tw = getTileWidth();
+            const th = getTileHeight();
+            const ch = getCubeHeight();
+            // Center the grid in the view
+            const offsetX = CANVAS_WIDTH / 2;
+            const offsetY = CANVAS_HEIGHT / 2 - (gameState.gridSize * th / 2);
+
+            const sx = (gx - gy) * (tw / 2) + offsetX;
+            const sy = (gx + gy) * (th / 2) - gz * ch + offsetY;
             return { x: sx, y: sy };
         }
 
-        // Check if position is valid
-        function isValidPosition(x, y) {
-            return x >= 0 && x < GRID_SIZE && y >= 0 && y < GRID_SIZE;
+        // Convert grid coords to screen coords (with camera)
+        function gridToScreen(gx, gy, gz = 0) {
+            const world = gridToScreenWorld(gx, gy, gz);
+            return {
+                x: world.x - gameState.cameraX,
+                y: world.y - gameState.cameraY
+            };
+        }
+
+        // Check if position is valid (can expand grid in any direction)
+        function isValidPosition(x, y, allowExpand = false) {
+            // If outside current bounds
+            if (x < 0 || y < 0 || x >= gridDimensions.width || y >= gridDimensions.height) {
+                if (allowExpand) {
+                    expandGridToFit(x, y);
+                    return true;  // After expansion, position is valid
+                }
+                return false;
+            }
+            return true;
         }
 
         // Get height at position
@@ -144,8 +319,8 @@
         // Draw isometric diamond (ground tile)
         function drawTile(gx, gy, color, outlineColor) {
             const pos = gridToScreen(gx, gy, 0);
-            const hw = TILE_WIDTH / 2;
-            const hh = TILE_HEIGHT / 2;
+            const hw = getTileWidth() / 2;
+            const hh = getTileHeight() / 2;
 
             k.drawPolygon({
                 pts: [
@@ -164,9 +339,9 @@
         // Draw isometric cube with opacity (0-1)
         function drawCube(gx, gy, gz, colors, opacity = 1) {
             const pos = gridToScreen(gx, gy, gz + 1);
-            const hw = TILE_WIDTH / 2;
-            const hh = TILE_HEIGHT / 2;
-            const ch = CUBE_HEIGHT;
+            const hw = getTileWidth() / 2;
+            const hh = getTileHeight() / 2;
+            const ch = getCubeHeight();
 
             k.drawPolygon({
                 pts: [k.vec2(-hw, 0), k.vec2(0, hh), k.vec2(0, hh + ch), k.vec2(-hw, ch)],
@@ -192,9 +367,11 @@
         }
 
         // Detection settings
-        const SCREEN_RADIUS = 80;   // pixels for screen-space check
+        const BASE_SCREEN_RADIUS = 80;   // pixels at zoom 1.0
         const MIN_OPACITY = 0.2;    // 80% transparent at center
         const MAX_OPACITY = 0.8;    // 20% transparent at edge
+
+        function getScreenRadius() { return BASE_SCREEN_RADIUS * gameState.zoom; }
 
         // Calculate opacity based on screen distance from player
         // Only affects cubes IN FRONT of player (blocking the view)
@@ -217,12 +394,13 @@
             const dy = cubeScreen.y - playerScreen.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
 
-            if (dist >= SCREEN_RADIUS) {
+            const radius = getScreenRadius();
+            if (dist >= radius) {
                 return 1.0;  // Fully opaque outside radius
             }
 
             // Lerp from MIN_OPACITY (at center) to MAX_OPACITY (at edge)
-            const t = dist / SCREEN_RADIUS;
+            const t = dist / radius;
             return MIN_OPACITY + t * (MAX_OPACITY - MIN_OPACITY);
         }
 
@@ -230,22 +408,23 @@
         function drawPlayer() {
             const height = getPlayerHeight();
             const pos = gridToScreen(player.x, player.y, height);
+            const z = gameState.zoom;
 
             // Player shadow
             k.drawEllipse({
-                pos: k.vec2(pos.x, pos.y + 4),
-                radiusX: 14,
-                radiusY: 8,
+                pos: k.vec2(pos.x, pos.y + 4 * z),
+                radiusX: 14 * z,
+                radiusY: 8 * z,
                 color: k.Color.fromArray([0, 0, 0, 0.3]),
             });
 
             // Player body (circle rendered as ellipse for isometric)
             k.drawEllipse({
-                pos: k.vec2(pos.x, pos.y - 10),
-                radiusX: 16,
-                radiusY: 16,
+                pos: k.vec2(pos.x, pos.y - 10 * z),
+                radiusX: 16 * z,
+                radiusY: 16 * z,
                 color: k.Color.fromArray([255, 100, 100]),
-                outline: { width: 2, color: k.Color.fromArray([200, 50, 50]) },
+                outline: { width: 2 * z, color: k.Color.fromArray([200, 50, 50]) },
             });
 
             // Direction indicator
@@ -256,10 +435,10 @@
             );
 
             k.drawCircle({
-                pos: k.vec2(facingPos.x, facingPos.y - 10),
-                radius: 6,
+                pos: k.vec2(facingPos.x, facingPos.y - 10 * z),
+                radius: 6 * z,
                 color: k.Color.fromArray([255, 255, 100]),
-                outline: { width: 1, color: k.Color.fromArray([200, 200, 50]) },
+                outline: { width: 1 * z, color: k.Color.fromArray([200, 200, 50]) },
             });
         }
 
@@ -272,8 +451,8 @@
 
             const height = getHeight(targetX, targetY);
             const pos = gridToScreen(targetX, targetY, height);
-            const hw = TILE_WIDTH / 2;
-            const hh = TILE_HEIGHT / 2;
+            const hw = getTileWidth() / 2;
+            const hh = getTileHeight() / 2;
 
             k.drawPolygon({
                 pts: [
@@ -285,7 +464,7 @@
                 pos: k.vec2(pos.x, pos.y),
                 fill: true,
                 color: k.Color.fromArray([255, 255, 100, 0.4]),
-                outline: { width: 2, color: k.Color.fromArray([255, 255, 100]) },
+                outline: { width: 2 * gameState.zoom, color: k.Color.fromArray([255, 255, 100]) },
             });
         }
 
@@ -310,7 +489,8 @@
                 const newX = player.x + dir.x;
                 const newY = player.y + dir.y;
 
-                if (!isValidPosition(newX, newY)) return;
+                // Allow expansion when moving to positive coordinates
+                if (!isValidPosition(newX, newY, true)) return;
 
                 const currentHeight = getPlayerHeight();
                 const targetHeight = getHeight(newX, newY);
@@ -327,7 +507,8 @@
                 const targetX = player.x + player.facing.x;
                 const targetY = player.y + player.facing.y;
 
-                if (!isValidPosition(targetX, targetY)) return;
+                // Allow expansion when building to positive coordinates
+                if (!isValidPosition(targetX, targetY, true)) return;
 
                 cubeHeights[targetX][targetY]++;
             }
@@ -385,14 +566,21 @@
 
             k.onKeyPress("space", () => placeCube());
 
+            // Update camera each frame
+            k.onUpdate(() => {
+                updateCamera();
+            });
+
             // Render loop
             k.onDraw(() => {
                 // Collect all drawable items with their sort keys
                 const drawables = [];
+                const gw = gridDimensions.width;
+                const gh = gridDimensions.height;
 
                 // Add ground tiles
-                for (let x = 0; x < GRID_SIZE; x++) {
-                    for (let y = 0; y < GRID_SIZE; y++) {
+                for (let x = 0; x < gw; x++) {
+                    for (let y = 0; y < gh; y++) {
                         drawables.push({
                             type: "tile",
                             x, y, z: 0,
@@ -402,8 +590,8 @@
                 }
 
                 // Add cubes
-                for (let x = 0; x < GRID_SIZE; x++) {
-                    for (let y = 0; y < GRID_SIZE; y++) {
+                for (let x = 0; x < gw; x++) {
+                    for (let y = 0; y < gh; y++) {
                         const height = cubeHeights[x][y];
                         for (let z = 0; z < height; z++) {
                             drawables.push({
@@ -454,18 +642,74 @@
 
                 // Draw UI
                 k.drawText({
-                    text: `Cubes placed: ${cubeHeights.flat().reduce((a, b) => a + b, 0)}`,
+                    text: `Cubes: ${cubeHeights.flat().reduce((a, b) => a + b, 0)}  Grid: ${gw}x${gh}`,
                     pos: k.vec2(20, 20),
-                    size: 18,
+                    size: 16,
                     color: k.Color.fromArray([200, 200, 200]),
                 });
 
                 k.drawText({
-                    text: `Height: ${playerHeight}`,
-                    pos: k.vec2(20, 45),
-                    size: 18,
+                    text: `Height: ${playerHeight}  Zoom: ${Math.round(gameState.zoom * 100)}%`,
+                    pos: k.vec2(20, 42),
+                    size: 16,
                     color: k.Color.fromArray([200, 200, 200]),
                 });
+
+                // Draw minimap when scrolling
+                if (gameState.scrolling) {
+                    const mmMaxSize = 120;  // Max minimap dimension
+                    const maxDim = Math.max(gw, gh);
+                    const mmScale = mmMaxSize / maxDim;
+                    const mmWidth = gw * mmScale;
+                    const mmHeight = gh * mmScale;
+                    const mmX = CANVAS_WIDTH - mmWidth - 10;
+                    const mmY = 10;
+
+                    // Minimap background
+                    k.drawRect({
+                        pos: k.vec2(mmX, mmY),
+                        width: mmWidth,
+                        height: mmHeight,
+                        color: k.Color.fromArray([30, 30, 40, 0.8]),
+                        outline: { width: 2, color: k.Color.fromArray([100, 100, 120]) },
+                    });
+
+                    // Draw cubes on minimap
+                    for (let x = 0; x < gw; x++) {
+                        for (let y = 0; y < gh; y++) {
+                            const h = cubeHeights[x][y];
+                            if (h > 0) {
+                                const colors = getCubeColors(h - 1);
+                                k.drawRect({
+                                    pos: k.vec2(mmX + x * mmScale, mmY + y * mmScale),
+                                    width: mmScale,
+                                    height: mmScale,
+                                    color: k.Color.fromArray(colors.top),
+                                });
+                            }
+                        }
+                    }
+
+                    // Draw player on minimap
+                    k.drawCircle({
+                        pos: k.vec2(mmX + player.x * mmScale + mmScale/2, mmY + player.y * mmScale + mmScale/2),
+                        radius: Math.max(3, mmScale / 2),
+                        color: k.Color.fromArray([255, 100, 100]),
+                        outline: { width: 1, color: k.Color.fromArray([255, 255, 255]) },
+                    });
+
+                    // Draw viewport rectangle on minimap
+                    const vpWidth = (CANVAS_WIDTH / getTileWidth()) * mmScale;
+                    const vpHeight = (CANVAS_HEIGHT / getTileHeight()) * mmScale;
+
+                    k.drawRect({
+                        pos: k.vec2(mmX + gw * mmScale / 2 - vpWidth / 2, mmY + gh * mmScale / 2 - vpHeight / 2),
+                        width: vpWidth,
+                        height: vpHeight,
+                        fill: false,
+                        outline: { width: 1, color: k.Color.fromArray([255, 255, 100]) },
+                    });
+                }
             });
         });
 

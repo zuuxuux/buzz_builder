@@ -200,12 +200,13 @@
         // Only affects cubes IN FRONT of player (blocking the view)
         // Returns 1.0 if behind player or outside radius
         function getOpacityForCube(cx, cy, cz, px, py, pz) {
-            // Check if cube is in front of player (closer to camera = higher sortKey)
-            const cubeSortKey = cx + cy + cz * 0.1;
-            const playerSortKey = px + py + pz * 0.1;
+            // Check if cube is in front of player (closer to camera)
+            // Only use x+y for depth check, not height - height doesn't affect occlusion
+            const cubeDepth = cx + cy;
+            const playerDepth = px + py;
 
             // If cube is behind or at same depth as player, keep it fully opaque
-            if (cubeSortKey <= playerSortKey) {
+            if (cubeDepth <= playerDepth) {
                 return 1.0;
             }
 

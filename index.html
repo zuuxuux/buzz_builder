@@ -60,6 +60,13 @@
             global: false,
         });
 
+        // Make canvas focusable for keyboard input
+        const canvas = document.querySelector('canvas');
+        if (canvas) {
+            canvas.tabIndex = 0;
+            canvas.focus();
+        }
+
         // Isometric settings
         const TILE_WIDTH = 64;
         const TILE_HEIGHT = 32;
@@ -154,51 +161,68 @@
             });
         }
 
-        // Draw isometric cube
-        function drawCube(gx, gy, gz, colors) {
+        // Draw isometric cube with opacity (0-1)
+        function drawCube(gx, gy, gz, colors, opacity = 1) {
             const pos = gridToScreen(gx, gy, gz + 1);
             const hw = TILE_WIDTH / 2;
             const hh = TILE_HEIGHT / 2;
             const ch = CUBE_HEIGHT;
 
-            // Left face
             k.drawPolygon({
-                pts: [
-                    k.vec2(-hw, 0),
-                    k.vec2(0, hh),
-                    k.vec2(0, hh + ch),
-                    k.vec2(-hw, ch),
-                ],
+                pts: [k.vec2(-hw, 0), k.vec2(0, hh), k.vec2(0, hh + ch), k.vec2(-hw, ch)],
                 pos: k.vec2(pos.x, pos.y),
                 fill: true,
                 color: k.Color.fromArray(colors.left),
+                opacity: opacity,
             });
-
-            // Right face
             k.drawPolygon({
-                pts: [
-                    k.vec2(hw, 0),
-                    k.vec2(0, hh),
-                    k.vec2(0, hh + ch),
-                    k.vec2(hw, ch),
-                ],
+                pts: [k.vec2(hw, 0), k.vec2(0, hh), k.vec2(0, hh + ch), k.vec2(hw, ch)],
                 pos: k.vec2(pos.x, pos.y),
                 fill: true,
                 color: k.Color.fromArray(colors.right),
+                opacity: opacity,
             });
-
-            // Top face
             k.drawPolygon({
-                pts: [
-                    k.vec2(0, -hh),
-                    k.vec2(hw, 0),
-                    k.vec2(0, hh),
-                    k.vec2(-hw, 0),
-                ],
+                pts: [k.vec2(0, -hh), k.vec2(hw, 0), k.vec2(0, hh), k.vec2(-hw, 0)],
                 pos: k.vec2(pos.x, pos.y),
                 fill: true,
                 color: k.Color.fromArray(colors.top),
+                opacity: opacity,
             });
+        }
+
+        // Detection settings
+        const SCREEN_RADIUS = 80;   // pixels for screen-space check
+        const MIN_OPACITY = 0.2;    // 80% transparent at center
+        const MAX_OPACITY = 0.8;    // 20% transparent at edge
+
+        // Calculate opacity based on screen distance from player
+        // Only affects cubes IN FRONT of player (blocking the view)
+        // Returns 1.0 if behind player or outside radius
+        function getOpacityForCube(cx, cy, cz, px, py, pz) {
+            // Check if cube is in front of player (closer to camera = higher sortKey)
+            const cubeSortKey = cx + cy + cz * 0.1;
+            const playerSortKey = px + py + pz * 0.1;
+
+            // If cube is behind or at same depth as player, keep it fully opaque
+            if (cubeSortKey <= playerSortKey) {
+                return 1.0;
+            }
+
+            // Check screen distance
+            const cubeScreen = gridToScreen(cx, cy, cz);
+            const playerScreen = gridToScreen(px, py, pz);
+            const dx = cubeScreen.x - playerScreen.x;
+            const dy = cubeScreen.y - playerScreen.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist >= SCREEN_RADIUS) {
+                return 1.0;  // Fully opaque outside radius
+            }
+
+            // Lerp from MIN_OPACITY (at center) to MAX_OPACITY (at edge)
+            const t = dist / SCREEN_RADIUS;
+            return MIN_OPACITY + t * (MAX_OPACITY - MIN_OPACITY);
         }
 
         // Draw the player (circle with direction indicator)
@@ -416,7 +440,12 @@
                             [50, 70, 50]
                         );
                     } else if (item.type === "cube") {
-                        drawCube(item.x, item.y, item.z, getCubeColors(item.z));
+                        // Get opacity based on distance from player (gradient transparency)
+                        const opacity = getOpacityForCube(
+                            item.x, item.y, item.z,
+                            player.x, player.y, playerHeight
+                        );
+                        drawCube(item.x, item.y, item.z, getCubeColors(item.z), opacity);
                     } else if (item.type === "player") {
                         drawPlayer();
                     }

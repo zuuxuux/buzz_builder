@@ -47,7 +47,7 @@
             <kbd>Q W E</kbd><br>
             <kbd>A</kbd>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<kbd>D</kbd> Tap: Face / Hold: Move &nbsp;&nbsp;
             <kbd>Space</kbd> Use Skill &nbsp;&nbsp;
-            <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> Select Skill &nbsp;&nbsp;
+            <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> Select Skill &nbsp;&nbsp;
             <button id="generate-city" onclick="generateCity(); this.blur(); document.querySelector('canvas').focus();">Generate City</button><br>
             <kbd>Z X C</kbd>
         </div>
@@ -339,6 +339,19 @@
 
             // Update zoom and camera
             updateZoomAndCamera();
+
+            // Clear and spawn treasures in the city
+            treasures.clear();
+            if (window.treasureHouses) window.treasureHouses.clear();
+            housesCollected = 0;
+            for (let i = 0; i < 20; i++) {
+                const x = Math.floor(Math.random() * CITY_SIZE);
+                const y = Math.floor(Math.random() * CITY_SIZE);
+                // Only spawn on empty ground
+                if (cubeHeights[x][y] === 0) {
+                    addTreasure(x, y);
+                }
+            }
         }
 
         // Track grid dimensions separately for asymmetric expansion
@@ -446,8 +459,89 @@
             1: { name: "Build", action: "build" },
             2: { name: "Clear", action: "clear" },
             3: { name: "Fly", action: "fly" },
+            4: { name: "Dig", action: "dig" },
         };
         let currentSkill = 1;
+
+        // Treasure system
+        const treasures = new Set();  // Stores "x,y" strings
+        let housesCollected = 0;
+
+        function addTreasure(x, y) {
+            treasures.add(`${x},${y}`);
+        }
+
+        function hasTreasure(x, y) {
+            return treasures.has(`${x},${y}`);
+        }
+
+        function removeTreasure(x, y) {
+            treasures.delete(`${x},${y}`);
+        }
+
+        // Build a special treasure house (golden castle-like structure)
+        function buildTreasureHouse(x, y) {
+            // Mark this as a treasure house location for special rendering
+            if (!window.treasureHouses) window.treasureHouses = new Set();
+
+            const size = 5;
+            const baseHeight = 2;
+            const towerHeight = 5;
+
+            // Build base platform
+            for (let dx = 0; dx < size; dx++) {
+                for (let dy = 0; dy < size; dy++) {
+                    const gx = x + dx;
+                    const gy = y + dy;
+                    if (gx < 0 || gy < 0) continue;
+                    expandGridToFit(gx, gy);
+                    cubeHeights[gx][gy] = Math.max(cubeHeights[gx][gy], baseHeight);
+                    window.treasureHouses.add(`${gx},${gy}`);
+                }
+            }
+
+            // Build corner towers
+            const towers = [[0, 0], [0, size-1], [size-1, 0], [size-1, size-1]];
+            for (const [dx, dy] of towers) {
+                const gx = x + dx;
+                const gy = y + dy;
+                if (gx < 0 || gy < 0) continue;
+                cubeHeights[gx][gy] = Math.max(cubeHeights[gx][gy], towerHeight);
+            }
+
+            // Build center spire
+            const cx = x + Math.floor(size / 2);
+            const cy = y + Math.floor(size / 2);
+            if (cx >= 0 && cy >= 0) {
+                expandGridToFit(cx, cy);
+                cubeHeights[cx][cy] = Math.max(cubeHeights[cx][cy], towerHeight + 2);
+            }
+
+            // Build entrance ramp
+            for (let i = 1; i <= baseHeight; i++) {
+                const gx = x + Math.floor(size / 2);
+                const gy = y + size - 1 + i;
+                if (gx >= 0 && gy >= 0) {
+                    expandGridToFit(gx, gy);
+                    cubeHeights[gx][gy] = Math.max(cubeHeights[gx][gy], baseHeight - i + 1);
+                    window.treasureHouses.add(`${gx},${gy}`);
+                }
+            }
+        }
+
+        // Spawn initial treasures
+        function spawnTreasures(count = 5) {
+            for (let i = 0; i < count; i++) {
+                const x = Math.floor(Math.random() * gridDimensions.width);
+                const y = Math.floor(Math.random() * gridDimensions.height);
+                // Don't spawn on player or existing structures
+                if ((x === player.x && y === player.y) || cubeHeights[x]?.[y] > 0) continue;
+                addTreasure(x, y);
+            }
+        }
+
+        // Initial treasure spawn
+        spawnTreasures(5);
 
         // Update camera to follow player (when scrolling)
         function updateCamera() {
@@ -667,6 +761,54 @@
             });
         }
 
+        // Draw treasure X mark
+        function drawTreasureX(gx, gy) {
+            const height = getHeight(gx, gy);
+            const pos = gridToScreen(gx, gy, height);
+            const z = gameState.zoom;
+            const size = 12 * z;
+
+            // Draw golden X
+            k.drawLine({
+                p1: k.vec2(pos.x - size, pos.y - size),
+                p2: k.vec2(pos.x + size, pos.y + size),
+                width: 4 * z,
+                color: k.Color.fromArray([255, 215, 0]),
+            });
+            k.drawLine({
+                p1: k.vec2(pos.x + size, pos.y - size),
+                p2: k.vec2(pos.x - size, pos.y + size),
+                width: 4 * z,
+                color: k.Color.fromArray([255, 215, 0]),
+            });
+            // Outline for visibility
+            k.drawLine({
+                p1: k.vec2(pos.x - size, pos.y - size),
+                p2: k.vec2(pos.x + size, pos.y + size),
+                width: 6 * z,
+                color: k.Color.fromArray([139, 69, 19]),
+            });
+            k.drawLine({
+                p1: k.vec2(pos.x + size, pos.y - size),
+                p2: k.vec2(pos.x - size, pos.y + size),
+                width: 6 * z,
+                color: k.Color.fromArray([139, 69, 19]),
+            });
+            // Inner gold
+            k.drawLine({
+                p1: k.vec2(pos.x - size, pos.y - size),
+                p2: k.vec2(pos.x + size, pos.y + size),
+                width: 3 * z,
+                color: k.Color.fromArray([255, 215, 0]),
+            });
+            k.drawLine({
+                p1: k.vec2(pos.x + size, pos.y - size),
+                p2: k.vec2(pos.x - size, pos.y + size),
+                width: 3 * z,
+                color: k.Color.fromArray([255, 215, 0]),
+            });
+        }
+
         // Draw highlight on tile player is facing
         function drawFacingHighlight() {
             const targetX = player.x + player.facing.x;
@@ -693,10 +835,22 @@
             });
         }
 
-        // Cube colors based on height
-        function getCubeColors(height) {
-            const hue = (height * 40) % 360;
-            // Simple hue-based coloring
+        // Cube colors based on height and type
+        function getCubeColors(height, x, y) {
+            // Check if this is a treasure house
+            if (window.treasureHouses && window.treasureHouses.has(`${x},${y}`)) {
+                // Golden/royal colors for treasure houses
+                const goldColors = [
+                    { top: [255, 215, 0], left: [184, 134, 11], right: [218, 165, 32] },   // Gold
+                    { top: [255, 223, 100], left: [200, 150, 30], right: [230, 180, 50] }, // Light gold
+                    { top: [238, 201, 0], left: [170, 120, 0], right: [200, 160, 20] },    // Deep gold
+                    { top: [255, 230, 130], left: [190, 140, 40], right: [220, 175, 60] }, // Pale gold
+                    { top: [212, 175, 55], left: [150, 110, 20], right: [180, 140, 40] },  // Antique gold
+                ];
+                return goldColors[height % goldColors.length];
+            }
+
+            // Simple hue-based coloring for normal cubes
             const baseColors = [
                 { top: [120, 180, 120], left: [80, 140, 80], right: [100, 160, 100] },
                 { top: [180, 140, 100], left: [140, 100, 60], right: [160, 120, 80] },
@@ -750,6 +904,17 @@
                     // Teleport to target position
                     player.x = targetX;
                     player.y = targetY;
+                } else if (action === "dig") {
+                    // Dig down (can go negative)
+                    cubeHeights[targetX][targetY]--;
+
+                    // Check if we found buried treasure (at depth -2)
+                    if (hasTreasure(targetX, targetY) && cubeHeights[targetX][targetY] <= -2) {
+                        removeTreasure(targetX, targetY);
+                        housesCollected++;
+                        // Build treasure house nearby
+                        buildTreasureHouse(targetX + 3, targetY + 3);
+                    }
                 }
             }
 
@@ -810,6 +975,7 @@
             k.onKeyPress("1", () => { currentSkill = 1; });
             k.onKeyPress("2", () => { currentSkill = 2; });
             k.onKeyPress("3", () => { currentSkill = 3; });
+            k.onKeyPress("4", () => { currentSkill = 4; });
 
             // Update camera each frame
             k.onUpdate(() => {
@@ -847,12 +1013,24 @@
                 // Add ground tiles (only in visible range)
                 for (let x = minX; x < maxX; x++) {
                     for (let y = minY; y < maxY; y++) {
-                        if (!isVisible(x, y, 0)) continue;
-                        drawables.push({
-                            type: "tile",
-                            x, y, z: 0,
-                            sortKey: x + y,
-                        });
+                        const h = cubeHeights[x]?.[y] ?? 0;
+                        if (h < 0) {
+                            // This is a pit - draw pit floor at the bottom
+                            if (!isVisible(x, y, h)) continue;
+                            drawables.push({
+                                type: "pit",
+                                x, y, z: h,
+                                sortKey: x + y + h * 0.1,
+                            });
+                        } else {
+                            // Normal ground tile
+                            if (!isVisible(x, y, 0)) continue;
+                            drawables.push({
+                                type: "tile",
+                                x, y, z: 0,
+                                sortKey: x + y,
+                            });
+                        }
                     }
                 }
 
@@ -870,6 +1048,21 @@
                             });
                         }
                     }
+                }
+
+                // Add treasures
+                for (const key of treasures) {
+                    const [tx, ty] = key.split(',').map(Number);
+                    if (tx < minX || tx >= maxX || ty < minY || ty >= maxY) continue;
+                    const th = cubeHeights[tx]?.[ty] ?? 0;
+                    if (!isVisible(tx, ty, th)) continue;
+                    drawables.push({
+                        type: "treasure",
+                        x: tx,
+                        y: ty,
+                        z: th,
+                        sortKey: tx + ty + th * 0.1 + 0.02,  // Draw just above tiles/cubes
+                    });
                 }
 
                 // Add player
@@ -897,13 +1090,60 @@
                             isEven ? [70, 90, 70] : [60, 80, 60],
                             [50, 70, 50]
                         );
+                    } else if (item.type === "pit") {
+                        // Draw pit floor (darker)
+                        const pos = gridToScreen(item.x, item.y, item.z);
+                        const hw = getTileWidth() / 2;
+                        const hh = getTileHeight() / 2;
+                        const isEven = (item.x + item.y) % 2 === 0;
+                        k.drawPolygon({
+                            pts: [
+                                k.vec2(0, -hh),
+                                k.vec2(hw, 0),
+                                k.vec2(0, hh),
+                                k.vec2(-hw, 0),
+                            ],
+                            pos: k.vec2(pos.x, pos.y),
+                            fill: true,
+                            color: k.Color.fromArray(isEven ? [40, 50, 55] : [35, 45, 50]),
+                            outline: { width: 1, color: k.Color.fromArray([30, 40, 45]) },
+                        });
+                        // Draw pit walls
+                        const ch = getCubeHeight();
+                        const depth = -item.z;
+                        // Left wall (visible from right side)
+                        k.drawPolygon({
+                            pts: [
+                                k.vec2(-hw, 0),
+                                k.vec2(0, hh),
+                                k.vec2(0, hh - depth * ch),
+                                k.vec2(-hw, -depth * ch),
+                            ],
+                            pos: k.vec2(pos.x, pos.y),
+                            fill: true,
+                            color: k.Color.fromArray([50, 60, 65]),
+                        });
+                        // Right wall (visible from left side)
+                        k.drawPolygon({
+                            pts: [
+                                k.vec2(hw, 0),
+                                k.vec2(0, hh),
+                                k.vec2(0, hh - depth * ch),
+                                k.vec2(hw, -depth * ch),
+                            ],
+                            pos: k.vec2(pos.x, pos.y),
+                            fill: true,
+                            color: k.Color.fromArray([45, 55, 60]),
+                        });
                     } else if (item.type === "cube") {
                         // Get opacity based on distance from player (gradient transparency)
                         const opacity = getOpacityForCube(
                             item.x, item.y, item.z,
                             player.x, player.y, playerHeight
                         );
-                        drawCube(item.x, item.y, item.z, getCubeColors(item.z), opacity);
+                        drawCube(item.x, item.y, item.z, getCubeColors(item.z, item.x, item.y), opacity);
+                    } else if (item.type === "treasure") {
+                        drawTreasureX(item.x, item.y);
                     } else if (item.type === "player") {
                         drawPlayer();
                     }
@@ -918,7 +1158,7 @@
                 });
 
                 k.drawText({
-                    text: `Height: ${playerHeight}  Zoom: ${Math.round(gameState.zoom * 100)}%`,
+                    text: `Height: ${playerHeight}  Zoom: ${Math.round(gameState.zoom * 100)}%  Houses: ${housesCollected}  Treasures: ${treasures.size}`,
                     pos: k.vec2(20, 42),
                     size: 16,
                     color: k.Color.fromArray([200, 200, 200]),
@@ -926,7 +1166,7 @@
 
                 // Draw skill indicator
                 k.drawText({
-                    text: `Skill: (1) Build  (2) Clear  (3) Fly`,
+                    text: `Skill: (1) Build  (2) Clear  (3) Fly  (4) Dig`,
                     pos: k.vec2(20, 64),
                     size: 14,
                     color: k.Color.fromArray([150, 150, 150]),

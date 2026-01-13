@@ -720,8 +720,9 @@
                 const currentHeight = getPlayerHeight();
                 const targetHeight = getHeight(newX, newY);
 
-                // Can only move if height difference is <= 1
-                if (targetHeight <= currentHeight + 1) {
+                // In fly mode, can move regardless of height difference
+                // Otherwise, can only move if height difference is <= 1
+                if (currentSkill === 3 || targetHeight <= currentHeight + 1) {
                     player.x = newX;
                     player.y = newY;
                 }

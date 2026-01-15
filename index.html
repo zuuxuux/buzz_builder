@@ -48,6 +48,7 @@
             <kbd>A</kbd>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<kbd>D</kbd> Tap: Face / Hold: Move &nbsp;&nbsp;
             <kbd>Space</kbd> Use Skill &nbsp;&nbsp;
             <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd> Select Skill &nbsp;&nbsp;
+            <kbd>T</kbd> Board/Exit Train &nbsp;&nbsp;
             <button id="generate-city" onclick="generateCity(); this.blur(); document.querySelector('canvas').focus();">Generate City</button><br>
             <kbd>Z X C</kbd>
         </div>
@@ -340,6 +341,9 @@
             // Update zoom and camera
             updateZoomAndCamera();
 
+            // Generate train track around city
+            generateTrack(CITY_SIZE);
+
             // Clear and spawn treasures in the city
             treasures.clear();
             if (window.treasureHouses) window.treasureHouses.clear();
@@ -347,8 +351,8 @@
             for (let i = 0; i < 20; i++) {
                 const x = Math.floor(Math.random() * CITY_SIZE);
                 const y = Math.floor(Math.random() * CITY_SIZE);
-                // Only spawn on empty ground
-                if (cubeHeights[x][y] === 0) {
+                // Only spawn on empty ground and not on track
+                if (cubeHeights[x][y] === 0 && !isTrack(x, y)) {
                     addTreasure(x, y);
                 }
             }
@@ -542,6 +546,220 @@
 
         // Initial treasure spawn
         spawnTreasures(5);
+
+        // Train system
+        const trainSystem = {
+            track: [],           // Array of {x, y} positions forming the loop
+            trackSet: new Set(), // For quick lookup "x,y"
+            stations: [],        // Array of {x, y, trackIndex} for stations
+            train: {
+                trackIndex: 0,   // Current position on track
+                speed: 0.1,      // Track positions per frame
+                progress: 0,     // Progress to next track position (0-1)
+                stopped: false,  // Whether stopped at station
+                stopTimer: 0,    // Countdown for station stop
+                cars: 3,         // Number of train cars
+            },
+            playerOnTrain: false,
+            playerBoardedAt: -1, // Track index where player boarded
+        };
+
+        // Generate track around city perimeter
+        function generateTrack(citySize) {
+            trainSystem.track = [];
+            trainSystem.trackSet.clear();
+            trainSystem.stations = [];
+
+            const margin = 5;  // Distance from edge
+            const trackPath = [];
+
+            // Create rectangular track around city
+            // Bottom edge (left to right)
+            for (let x = margin; x < citySize - margin; x++) {
+                trackPath.push({ x, y: citySize - margin });
+            }
+            // Right edge (bottom to top)
+            for (let y = citySize - margin; y > margin; y--) {
+                trackPath.push({ x: citySize - margin, y });
+            }
+            // Top edge (right to left)
+            for (let x = citySize - margin; x > margin; x--) {
+                trackPath.push({ x, y: margin });
+            }
+            // Left edge (top to bottom)
+            for (let y = margin; y < citySize - margin; y++) {
+                trackPath.push({ x: margin, y });
+            }
+
+            // Store track
+            trainSystem.track = trackPath;
+            for (const pos of trackPath) {
+                trainSystem.trackSet.add(`${pos.x},${pos.y}`);
+            }
+
+            // Clear track area (remove buildings on track)
+            for (const pos of trackPath) {
+                if (cubeHeights[pos.x] && cubeHeights[pos.x][pos.y] !== undefined) {
+                    cubeHeights[pos.x][pos.y] = 0;
+                }
+                // Also clear adjacent tiles for track width
+                for (let dx = -1; dx <= 1; dx++) {
+                    for (let dy = -1; dy <= 1; dy++) {
+                        const nx = pos.x + dx;
+                        const ny = pos.y + dy;
+                        if (nx >= 0 && ny >= 0 && nx < citySize && ny < citySize) {
+                            if (cubeHeights[nx] && cubeHeights[nx][ny] !== undefined) {
+                                cubeHeights[nx][ny] = 0;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Add stations at corners and midpoints
+            const stationIndices = [
+                0,                                          // Bottom-left corner
+                Math.floor(trackPath.length * 0.125),       // Bottom middle
+                Math.floor(trackPath.length * 0.25),        // Bottom-right corner
+                Math.floor(trackPath.length * 0.375),       // Right middle
+                Math.floor(trackPath.length * 0.5),         // Top-right corner
+                Math.floor(trackPath.length * 0.625),       // Top middle
+                Math.floor(trackPath.length * 0.75),        // Top-left corner
+                Math.floor(trackPath.length * 0.875),       // Left middle
+            ];
+
+            for (const idx of stationIndices) {
+                const pos = trackPath[idx];
+                trainSystem.stations.push({
+                    x: pos.x,
+                    y: pos.y,
+                    trackIndex: idx,
+                });
+            }
+
+            // Reset train position
+            trainSystem.train.trackIndex = 0;
+            trainSystem.train.progress = 0;
+            trainSystem.train.stopped = false;
+            trainSystem.train.stopTimer = 0;
+            trainSystem.playerOnTrain = false;
+        }
+
+        // Check if position is a track tile
+        function isTrack(x, y) {
+            return trainSystem.trackSet.has(`${x},${y}`);
+        }
+
+        // Check if position is a station
+        function getStationAt(x, y) {
+            return trainSystem.stations.find(s => s.x === x && s.y === y);
+        }
+
+        // Get train's current world position (interpolated)
+        function getTrainPosition() {
+            const track = trainSystem.track;
+            if (track.length === 0) return null;
+
+            const currentIdx = trainSystem.train.trackIndex;
+            const nextIdx = (currentIdx + 1) % track.length;
+            const progress = trainSystem.train.progress;
+
+            const current = track[currentIdx];
+            const next = track[nextIdx];
+
+            return {
+                x: current.x + (next.x - current.x) * progress,
+                y: current.y + (next.y - current.y) * progress,
+            };
+        }
+
+        // Update train position
+        function updateTrain() {
+            const train = trainSystem.train;
+            const track = trainSystem.track;
+            if (track.length === 0) return;
+
+            // Check if stopped at station
+            if (train.stopped) {
+                train.stopTimer -= 1/60;  // Assuming 60fps
+                if (train.stopTimer <= 0) {
+                    train.stopped = false;
+                }
+                return;
+            }
+
+            // Move train
+            train.progress += train.speed;
+
+            while (train.progress >= 1) {
+                train.progress -= 1;
+                train.trackIndex = (train.trackIndex + 1) % track.length;
+
+                // Check if arrived at station
+                const currentPos = track[train.trackIndex];
+                const station = getStationAt(currentPos.x, currentPos.y);
+                if (station) {
+                    train.stopped = true;
+                    train.stopTimer = 2;  // Stop for 2 seconds
+                }
+            }
+
+            // Update player position if on train
+            if (trainSystem.playerOnTrain) {
+                const pos = getTrainPosition();
+                if (pos) {
+                    player.x = Math.round(pos.x);
+                    player.y = Math.round(pos.y);
+                }
+            }
+        }
+
+        // Board or exit train
+        function toggleTrainBoarding() {
+            const train = trainSystem.train;
+            const track = trainSystem.track;
+            if (track.length === 0) return false;
+
+            if (trainSystem.playerOnTrain) {
+                // Exit train - only at stations when stopped
+                if (train.stopped) {
+                    trainSystem.playerOnTrain = false;
+                    // Move player off the track
+                    const pos = track[train.trackIndex];
+                    player.x = pos.x + 1;
+                    player.y = pos.y + 1;
+                    return true;
+                }
+                return false;
+            } else {
+                // Board train - must be at station and train stopped there
+                const station = getStationAt(player.x, player.y);
+                if (station && train.stopped) {
+                    const currentPos = track[train.trackIndex];
+                    if (currentPos.x === station.x && currentPos.y === station.y) {
+                        trainSystem.playerOnTrain = true;
+                        trainSystem.playerBoardedAt = train.trackIndex;
+                        return true;
+                    }
+                }
+                // Also allow boarding if adjacent to station
+                for (const station of trainSystem.stations) {
+                    const dx = Math.abs(player.x - station.x);
+                    const dy = Math.abs(player.y - station.y);
+                    if (dx <= 1 && dy <= 1 && train.stopped) {
+                        const currentPos = track[train.trackIndex];
+                        if (currentPos.x === station.x && currentPos.y === station.y) {
+                            trainSystem.playerOnTrain = true;
+                            trainSystem.playerBoardedAt = train.trackIndex;
+                            player.x = station.x;
+                            player.y = station.y;
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+        }
 
         // Update camera to follow player (when scrolling)
         function updateCamera() {
@@ -761,6 +979,156 @@
             });
         }
 
+        // Draw train track tile
+        function drawTrackTile(gx, gy) {
+            const pos = gridToScreen(gx, gy, 0);
+            const hw = getTileWidth() / 2;
+            const hh = getTileHeight() / 2;
+            const z = gameState.zoom;
+
+            // Track base (darker than ground)
+            k.drawPolygon({
+                pts: [
+                    k.vec2(0, -hh),
+                    k.vec2(hw, 0),
+                    k.vec2(0, hh),
+                    k.vec2(-hw, 0),
+                ],
+                pos: k.vec2(pos.x, pos.y),
+                fill: true,
+                color: k.Color.fromArray([50, 45, 40]),
+                outline: { width: 1, color: k.Color.fromArray([70, 65, 60]) },
+            });
+
+            // Rail lines
+            k.drawLine({
+                p1: k.vec2(pos.x - hw * 0.3, pos.y - hh * 0.3),
+                p2: k.vec2(pos.x + hw * 0.3, pos.y + hh * 0.3),
+                width: 2 * z,
+                color: k.Color.fromArray([120, 120, 130]),
+            });
+            k.drawLine({
+                p1: k.vec2(pos.x - hw * 0.5, pos.y + hh * 0.1),
+                p2: k.vec2(pos.x + hw * 0.1, pos.y - hh * 0.5),
+                width: 2 * z,
+                color: k.Color.fromArray([120, 120, 130]),
+            });
+        }
+
+        // Draw station
+        function drawStation(gx, gy) {
+            const pos = gridToScreen(gx, gy, 0);
+            const z = gameState.zoom;
+
+            // Platform (raised yellow area)
+            k.drawEllipse({
+                pos: k.vec2(pos.x, pos.y),
+                radiusX: 20 * z,
+                radiusY: 12 * z,
+                color: k.Color.fromArray([180, 160, 60]),
+                outline: { width: 2 * z, color: k.Color.fromArray([140, 120, 40]) },
+            });
+
+            // Station sign
+            k.drawRect({
+                pos: k.vec2(pos.x - 8 * z, pos.y - 25 * z),
+                width: 16 * z,
+                height: 12 * z,
+                color: k.Color.fromArray([200, 50, 50]),
+                outline: { width: 1 * z, color: k.Color.fromArray([150, 30, 30]) },
+            });
+
+            // Sign post
+            k.drawRect({
+                pos: k.vec2(pos.x - 1 * z, pos.y - 13 * z),
+                width: 2 * z,
+                height: 15 * z,
+                color: k.Color.fromArray([80, 80, 80]),
+            });
+        }
+
+        // Draw train
+        function drawTrain() {
+            const pos = getTrainPosition();
+            if (!pos) return;
+
+            const screenPos = gridToScreen(pos.x, pos.y, 0);
+            const z = gameState.zoom;
+            const train = trainSystem.train;
+
+            // Draw train cars (locomotive + cars behind)
+            for (let car = 0; car < train.cars; car++) {
+                // Calculate position for this car (behind the locomotive)
+                const carOffset = car * 8;  // Track positions behind
+                let carTrackIdx = train.trackIndex - carOffset;
+                if (carTrackIdx < 0) carTrackIdx += trainSystem.track.length;
+
+                const carTrackPos = trainSystem.track[carTrackIdx];
+                if (!carTrackPos) continue;
+
+                const carScreenPos = gridToScreen(carTrackPos.x, carTrackPos.y, 0);
+
+                if (car === 0) {
+                    // Locomotive (red)
+                    k.drawEllipse({
+                        pos: k.vec2(carScreenPos.x, carScreenPos.y - 8 * z),
+                        radiusX: 14 * z,
+                        radiusY: 10 * z,
+                        color: k.Color.fromArray([200, 50, 50]),
+                        outline: { width: 2 * z, color: k.Color.fromArray([150, 30, 30]) },
+                    });
+                    // Chimney
+                    k.drawRect({
+                        pos: k.vec2(carScreenPos.x - 3 * z, carScreenPos.y - 22 * z),
+                        width: 6 * z,
+                        height: 8 * z,
+                        color: k.Color.fromArray([60, 60, 60]),
+                    });
+                    // Smoke puff
+                    if (!train.stopped) {
+                        const smokeOffset = (Date.now() / 100) % 10;
+                        k.drawCircle({
+                            pos: k.vec2(carScreenPos.x, carScreenPos.y - 28 * z - smokeOffset * z),
+                            radius: (4 + smokeOffset * 0.5) * z,
+                            color: k.Color.fromArray([200, 200, 200, 0.6]),
+                        });
+                    }
+                } else {
+                    // Passenger cars (blue)
+                    k.drawEllipse({
+                        pos: k.vec2(carScreenPos.x, carScreenPos.y - 6 * z),
+                        radiusX: 12 * z,
+                        radiusY: 8 * z,
+                        color: k.Color.fromArray([60, 100, 180]),
+                        outline: { width: 2 * z, color: k.Color.fromArray([40, 70, 140]) },
+                    });
+                    // Windows
+                    k.drawRect({
+                        pos: k.vec2(carScreenPos.x - 6 * z, carScreenPos.y - 9 * z),
+                        width: 4 * z,
+                        height: 3 * z,
+                        color: k.Color.fromArray([200, 220, 255]),
+                    });
+                    k.drawRect({
+                        pos: k.vec2(carScreenPos.x + 2 * z, carScreenPos.y - 9 * z),
+                        width: 4 * z,
+                        height: 3 * z,
+                        color: k.Color.fromArray([200, 220, 255]),
+                    });
+                }
+            }
+
+            // Show "STOPPED" indicator when at station
+            if (train.stopped) {
+                k.drawText({
+                    text: "STOP",
+                    pos: k.vec2(screenPos.x - 15 * z, screenPos.y - 40 * z),
+                    size: 10 * z,
+                    color: k.Color.fromArray([255, 255, 100]),
+                });
+            }
+        }
+
         // Draw treasure X mark
         function drawTreasureX(gx, gy) {
             const height = getHeight(gx, gy);
@@ -977,9 +1345,15 @@
             k.onKeyPress("3", () => { currentSkill = 3; });
             k.onKeyPress("4", () => { currentSkill = 4; });
 
-            // Update camera each frame
+            // Update camera and train each frame
             k.onUpdate(() => {
                 updateCamera();
+                updateTrain();
+            });
+
+            // Train boarding key
+            k.onKeyPress("t", () => {
+                toggleTrainBoarding();
             });
 
             // Render loop
@@ -1022,6 +1396,14 @@
                                 x, y, z: h,
                                 sortKey: x + y + h * 0.1,
                             });
+                        } else if (isTrack(x, y)) {
+                            // Track tile
+                            if (!isVisible(x, y, 0)) continue;
+                            drawables.push({
+                                type: "track",
+                                x, y, z: 0,
+                                sortKey: x + y,
+                            });
                         } else {
                             // Normal ground tile
                             if (!isVisible(x, y, 0)) continue;
@@ -1032,6 +1414,18 @@
                             });
                         }
                     }
+                }
+
+                // Add stations
+                for (const station of trainSystem.stations) {
+                    if (!isVisible(station.x, station.y, 0)) continue;
+                    drawables.push({
+                        type: "station",
+                        x: station.x,
+                        y: station.y,
+                        z: 0,
+                        sortKey: station.x + station.y + 0.01,
+                    });
                 }
 
                 // Add cubes (only in visible range)
@@ -1090,6 +1484,10 @@
                             isEven ? [70, 90, 70] : [60, 80, 60],
                             [50, 70, 50]
                         );
+                    } else if (item.type === "track") {
+                        drawTrackTile(item.x, item.y);
+                    } else if (item.type === "station") {
+                        drawStation(item.x, item.y);
                     } else if (item.type === "pit") {
                         // Draw pit floor (darker)
                         const pos = gridToScreen(item.x, item.y, item.z);
@@ -1149,6 +1547,11 @@
                     }
                 }
 
+                // Draw train on top (always visible)
+                if (trainSystem.track.length > 0) {
+                    drawTrain();
+                }
+
                 // Draw UI
                 k.drawText({
                     text: `Cubes: ${cubeHeights.flat().reduce((a, b) => a + b, 0)}  Grid: ${gw}x${gh}`,
@@ -1177,6 +1580,19 @@
                     size: 16,
                     color: k.Color.fromArray([255, 255, 100]),
                 });
+
+                // Train status
+                if (trainSystem.track.length > 0) {
+                    const trainStatus = trainSystem.playerOnTrain ? "ON TRAIN - Press T to exit at station" :
+                                       trainSystem.train.stopped ? "Train at station - Press T to board" :
+                                       "Wait at station for train";
+                    k.drawText({
+                        text: trainStatus,
+                        pos: k.vec2(20, 100),
+                        size: 14,
+                        color: trainSystem.playerOnTrain ? k.Color.fromArray([100, 255, 100]) : k.Color.fromArray([150, 150, 150]),
+                    });
+                }
 
                 // Draw minimap when scrolling
                 if (gameState.scrolling) {
@@ -1211,6 +1627,36 @@
                                 });
                             }
                         }
+                    }
+
+                    // Draw track on minimap
+                    for (const pos of trainSystem.track) {
+                        k.drawRect({
+                            pos: k.vec2(mmX + pos.x * mmScale, mmY + pos.y * mmScale),
+                            width: mmScale,
+                            height: mmScale,
+                            color: k.Color.fromArray([70, 65, 60]),
+                        });
+                    }
+
+                    // Draw stations on minimap
+                    for (const station of trainSystem.stations) {
+                        k.drawCircle({
+                            pos: k.vec2(mmX + station.x * mmScale + mmScale/2, mmY + station.y * mmScale + mmScale/2),
+                            radius: Math.max(2, mmScale),
+                            color: k.Color.fromArray([180, 160, 60]),
+                        });
+                    }
+
+                    // Draw train on minimap
+                    const trainPos = getTrainPosition();
+                    if (trainPos) {
+                        k.drawCircle({
+                            pos: k.vec2(mmX + trainPos.x * mmScale + mmScale/2, mmY + trainPos.y * mmScale + mmScale/2),
+                            radius: Math.max(3, mmScale),
+                            color: k.Color.fromArray([200, 50, 50]),
+                            outline: { width: 1, color: k.Color.fromArray([255, 255, 255]) },
+                        });
                     }
 
                     // Draw player on minimap
